@@ -1,4 +1,5 @@
 const db = require("../models");
+const { userHasPurchased } = require("./cartService");
 const { createOkObjectSuccess, createResponseError, createResponseMessage } = require("../helpers/responseHelper");
 
 async function getAll() {
@@ -48,23 +49,56 @@ async function destroy(id) {
     return createResponseError(error.status, error.message);
   }
 }
-async function addRating(product_id, user_id, rating) {
+
+async function addRating(product_id, user_id, rating, comment = null, anonymous = false) {
   try {
-    const ratingScore = await db.Rating.create({ product_id, user_id, rating });
+    const hasPurchased = await userHasPurchased(user_id, product_id);
+
+    if (!hasPurchased) {
+      return createResponseError(403, "Du har inte köpt denna produkt");
+    }
+
+    const ratingScore = await db.Rating.create({ product_id, user_id, rating, comment, anonymous });
     return createOkObjectSuccess(ratingScore);
+
   } catch (error) {
-    return createResponseError(error.status, error.message);
+    return createResponseError(500, error.message || "Något gick fel vid betygssättning");
   }
 }
 
 async function getProductRatings(product_id) {
   try {
     const ratings = await db.Rating.findAll({ where: { product_id } });
-    const avgScore = ratings.reduce((sum, r) => sum + r.rating, 0) / ratings.length || 0;
+    const avgScore = ratings.length > 0 
+      ? ratings.reduce((sum, r) => sum + r.rating, 0) / ratings.length 
+      : 0;
     return createOkObjectSuccess({ ratings, avgScore });
   } catch (error) {
-    return createResponseError(error.status, error.message);
+    return createResponseError(error.status || 500, error.message);
   }
 }
 
-module.exports = { getAll, getById, create, update, destroy, addRating, getProductRatings };
+async function getProductReviews(product_id) {
+  try {
+    const reviews = await db.Rating.findAll({
+      where: {
+         product_id,
+         comment: { [db.Sequelize.Op.ne]: null }, //check for comments
+      },
+      include: [{ 
+        model: db.User, 
+        as: 'user',
+        attributes: ['first_name'] 
+      }],
+      order: [['created_at', 'DESC']]
+    });
+    
+    return createOkObjectSuccess({ reviews });
+  } catch (error) {
+    return createResponseError(error.status || 500, error.message);
+  }
+}
+
+
+
+module.exports = { getAll, getById, create, update, destroy, addRating, getProductRatings, getProductReviews };
